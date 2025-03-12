@@ -24,7 +24,5 @@ app.register_blueprint(root_message_bp)  # Register root level endpoints
 def root():
     return redirect('/api/')
 
-if __name__ == '__main__':
-    print(f"Starting Bot Service on port {PORT}...")
-    print("Waiting for messages from the Connector Service...")
-    app.run(host='0.0.0.0', port=PORT, debug=DEBUG) 
+# This ensures the app runs in both development and production
+app.run(host='0.0.0.0', port=PORT, debug=DEBUG) if __name__ == '__main__' else None 
