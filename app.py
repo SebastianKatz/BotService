@@ -24,5 +24,5 @@ app.register_blueprint(root_message_bp)  # Register root level endpoints
 def root():
     return redirect('/api/')
 
-# This ensures the app runs in both development and production
-app.run(host='0.0.0.0', port=PORT, debug=DEBUG) if __name__ == '__main__' else None 
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=PORT, debug=DEBUG) 
