@@ -124,17 +124,16 @@ def process_message():
         # Process the message using Langchain
         expense_data = parse_expense_with_langchain(message)
         
-        # If the message is not an expense, return a response indicating that
+        # If the message is not an expense, return without response
         if not expense_data:
-            print("Message is not an expense. Ignoring.")
+            print("Message is not an expense. No response needed.")
             return jsonify({
                 "success": True,
                 "telegram_id": telegram_id,
                 "message": message,
-                "user_whitelisted": True,
+                "user_whitelisted": is_whitelisted,
                 "expense_created": False,
-                "should_respond": True,
-                "response_message": "This doesn't seem to be an expense. Please provide details like 'Groceries $50', 'Paid $30 for gas', 'Heladera 300 pesos', or 'Taxi 20'."
+                "should_respond": False
             })
         
         # Get user by Telegram ID
