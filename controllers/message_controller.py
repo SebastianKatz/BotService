@@ -7,6 +7,7 @@ import os
 from langchain_openai import ChatOpenAI
 import json
 from prompts.expense_prompt import EXPENSE_PROMPT
+from middleware.auth_middleware import auth_middleware
 
 # Create a blueprint for message routes
 message_bp = Blueprint('message', __name__, url_prefix='/api')
@@ -25,15 +26,29 @@ llm = ChatOpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
 
+# Helper function to get the help message
+def get_help_message():
+    return "🤖 Expense Bot - Available Commands:\n\n" + \
+           "To register, send:\n" + \
+           '"I want to register to the application"\n\n' + \
+           "Once registered, you can:\n" + \
+           "1. Record expenses by sending messages like:\n" + \
+           '   - "Bought bread for $100"\n' + \
+           '   - "Paid $30 for gas"\n' + \
+           '   - "Taxi $20"\n\n' + \
+           "2. Use /report to see your expenses from the last 24 hours"
+
 @message_bp.route('/', methods=['GET'])
-def home():
+@auth_middleware
+def api_home():
     """
     Home endpoint
     """
     return jsonify({"status": "ok", "message": "Bot Service running correctly"})
 
 @message_bp.route('/health', methods=['GET'])
-def health():
+@auth_middleware
+def api_health():
     """
     Health check endpoint
     """
@@ -55,7 +70,8 @@ def clean_amount(amount_str):
         return 0.0
 
 @message_bp.route('/process-message', methods=['POST'])
-def process_message():
+@auth_middleware
+def api_process_message():
     """
     Receives messages from the Connector Service, verifies if the user is in the whitelist,
     processes the message using Langchain, and returns a response
@@ -92,37 +108,31 @@ def process_message():
                 "telegram_id": telegram_id,
                 "message": message,
                 "should_respond": True,
-                "response_message": "🤖 Expense Bot - Available Commands:\n\n" +
-                                 "To register, send:\n" +
-                                 "'I want to register to the application'\n\n" +
-                                 "Once registered, you can:\n" +
-                                 "1. Record expenses by sending messages like:\n" +
-                                 "   - 'Bought bread for $100'\n" +
-                                 "   - 'Paid $30 for gas'\n" +
-                                 "   - 'Taxi $20'\n\n" +
-                                 "2. Use /report to see your expenses from the last 24 hours"
+                "response_message": get_help_message()
             })
         
-        # Check if this is a daily report request
+        # Check if this is a report command
         if message.lower().strip() == "/report":
-            print("\n=== REPORT COMMAND PROCESSING ===")
-            print(f"Received report request from telegram_id: {telegram_id}")
+            print("Report command received")
+            
+            # Check if the user is registered
+            is_registered = user_service.user_exists(telegram_id)
+            
+            if not is_registered:
+                print(f"User {telegram_id} is not registered")
+                # For unregistered users, send the help message
+                return jsonify({
+                    "success": True,
+                    "telegram_id": telegram_id,
+                    "message": message,
+                    "user_whitelisted": False,
+                    "should_respond": True,
+                    "response_message": "You need to register first to use this command.\n\n" + get_help_message()
+                })
+            
             try:
-                # Check if user is registered
-                print("Checking if user is registered...")
-                if not user_service.user_exists(telegram_id):
-                    print(f"User {telegram_id} is not registered")
-                    return jsonify({
-                        "success": True,
-                        "telegram_id": telegram_id,
-                        "message": message,
-                        "should_respond": False
-                    })
-                
-                print(f"User {telegram_id} is registered")
                 # Get user by Telegram ID
                 user = user_service.get_user(telegram_id)
-                print(f"Retrieved user data: {user.__dict__ if user else None}")
                 
                 if not user or not user.id:
                     print(f"User with Telegram ID {telegram_id} not found or has no ID")
@@ -131,136 +141,103 @@ def process_message():
                         "error": "User not found"
                     }), 404
                 
-                print(f"Getting daily expenses for user {user.id}")
                 # Get daily expenses
-                try:
-                    daily_expenses = expense_repository.get_daily_expenses(user.id)
-                    print(f"Successfully retrieved expenses. Count: {len(daily_expenses) if daily_expenses else 0}")
-                    if daily_expenses:
-                        print("First expense data:", daily_expenses[0].__dict__ if daily_expenses else None)
-                except Exception as e:
-                    print(f"Error getting daily expenses: {str(e)}")
-                    raise e
+                expenses = expense_repository.get_daily_expenses(user.id)
                 
-                if not daily_expenses:
-                    print("No expenses found in the last 24 hours")
+                if not expenses or len(expenses) == 0:
+                    print(f"No expenses found for user {telegram_id}")
                     return jsonify({
                         "success": True,
                         "telegram_id": telegram_id,
                         "message": message,
+                        "user_whitelisted": True,
                         "should_respond": True,
-                        "response_message": "You have no expenses recorded in the last 24 hours."
+                        "response_message": "📊 Expense Report (Last 24 Hours)\n\nNo expenses recorded in the last 24 hours."
                     })
                 
-                print("Formatting expenses report...")
-                # Format the expenses report
-                try:
-                    # Clean and sum amounts
-                    amounts = [clean_amount(expense.amount) for expense in daily_expenses]
-                    total = sum(amounts)
+                # Calculate total
+                total = sum(clean_amount(expense.amount) for expense in expenses)
+                
+                # Format the report with the preferred style
+                report = "📊 Your expenses in the last 24 hours:\n\n"
+                
+                for expense in expenses:
+                    amount = clean_amount(expense.amount)
+                    # Format time in 12-hour format with AM/PM
+                    time_str = expense.added_at.strftime("%I:%M %p") if expense.added_at else "N/A"
                     
-                    report = "📊 Your expenses in the last 24 hours:\n\n"
-                    
-                    for expense in daily_expenses:
-                        try:
-                            time = expense.added_at.strftime("%I:%M %p")
-                            amount = clean_amount(expense.amount)
-                            report += f"• {expense.description}\n"
-                            report += f"  💰 ${amount:,.2f}\n"
-                            report += f"  🏷️ {expense.category}\n"
-                            report += f"  🕒 {time}\n\n"
-                        except Exception as e:
-                            print(f"Error formatting expense: {e}")
-                            print(f"Expense data: {expense.__dict__}")
-                            continue
-                    
-                    report += f"Total: ${total:,.2f}"
-                    print(f"Generated report: {report}")
-                    print("=== END REPORT PROCESSING ===\n")
-                    
-                    return jsonify({
-                        "success": True,
-                        "telegram_id": telegram_id,
-                        "message": message,
-                        "should_respond": True,
-                        "response_message": report
-                    })
-                except Exception as e:
-                    print(f"Error calculating total or formatting report: {str(e)}")
-                    print("Expense amounts:", [expense.amount for expense in daily_expenses])
-                    raise Exception("Error processing expense amounts. Please check that all amounts are valid numbers.")
-            except Exception as e:
-                print(f"Error processing report request: {str(e)}")
-                print(f"Full error details: ", e)
-                import traceback
-                print("Traceback:", traceback.format_exc())
-                return jsonify({
-                    "success": False,
-                    "error": f"Error generating report: {str(e)}"
-                }), 500
-        
-        # Check if this is a registration request
-        if message.lower().strip() == "i want to register to the application":
-            print("Registration request received")
-            
-            # Check if user is already registered
-            if user_service.user_exists(telegram_id):
-                print("User already registered")
+                    report += f"• {expense.description}\n"
+                    report += f"  💰 ${amount:,.2f}\n"
+                    report += f"  🏷️ {expense.category}\n"
+                    report += f"  🕒 {time_str}\n\n"
+                
+                # Add total at the end
+                report += f"Total: ${total:,.2f}"
+                
+                print(f"Report generated for user {telegram_id}")
                 return jsonify({
                     "success": True,
                     "telegram_id": telegram_id,
                     "message": message,
                     "user_whitelisted": True,
                     "should_respond": True,
-                    "response_message": "You are already registered in the application."
+                    "response_message": report
                 })
+            except Exception as e:
+                print(f"Error generating report: {str(e)}")
+                return jsonify({
+                    "success": False,
+                    "telegram_id": telegram_id,
+                    "message": message,
+                    "user_whitelisted": True,
+                    "should_respond": True,
+                    "response_message": "Sorry, I couldn't generate your expense report. Please try again later."
+                })
+        
+        # Check if the user is registered
+        is_registered = user_service.user_exists(telegram_id)
+        
+        if not is_registered:
+            print(f"User {telegram_id} is not registered")
             
-            # Create new user
-            try:
+            # Check if this is a registration request
+            if "register" in message.lower():
+                print(f"Registration request from {telegram_id}")
+                
+                # Register the user
                 user_service.create_user(telegram_id)
-                print(f"User {telegram_id} registered successfully")
+                
                 return jsonify({
                     "success": True,
                     "telegram_id": telegram_id,
                     "message": message,
                     "user_whitelisted": True,
                     "should_respond": True,
-                    "response_message": "You have been successfully registered. You can now start using the bot."
+                    "response_message": "You have been registered successfully! You can now start tracking your expenses."
                 })
-            except Exception as e:
-                print(f"Error registering user: {str(e)}")
-                return jsonify({
-                    "success": False,
-                    "error": "Error registering user"
-                }), 500
-        
-        # Check if the user is in the whitelist
-        is_whitelisted = user_service.user_exists(telegram_id)
-        print(f"User in whitelist: {'YES' if is_whitelisted else 'NO'}")
-        
-        # If user is not in the whitelist, ignore the message completely
-        if not is_whitelisted:
-            print("User not in whitelist. Ignoring message without response.")
+            
+            # If not a registration request, send the help message
+            print(f"Sending help message to unregistered user {telegram_id}")
             return jsonify({
                 "success": True,
                 "telegram_id": telegram_id,
                 "message": message,
                 "user_whitelisted": False,
-                "expense_created": False,
-                "should_respond": False
+                "should_respond": True,
+                "response_message": "Welcome! To use this bot, you need to register first.\n\n" + get_help_message()
             })
         
-        # Process the message using Langchain
+        # Parse the expense using Langchain
         expense_data = parse_expense_with_langchain(message)
         
-        # If the message is not an expense, return without response
+        # If the message is not an expense, ignore it
         if not expense_data:
-            print("Message is not an expense. No response needed.")
+            print(f"Message is not an expense: {message}")
             return jsonify({
                 "success": True,
                 "telegram_id": telegram_id,
                 "message": message,
-                "user_whitelisted": is_whitelisted,
+                "user_whitelisted": True,
                 "expense_created": False,
                 "should_respond": False
             })
@@ -275,24 +252,18 @@ def process_message():
             }), 404
         
         # Create the expense
-        print(f"Message processed as expense: {expense_data}")
         expense = Expense(
             user_id=user.id,
-            description=expense_data['description'],
-            amount=expense_data['amount'],
-            category=expense_data['category'],
-            added_at=datetime.now()
+            description=expense_data["description"],
+            amount=expense_data["amount"],
+            category=expense_data["category"]
         )
         
-        # Save the expense to the database
-        created_expense = expense_repository.create(expense)
+        # Save the expense
+        expense_repository.create(expense)
         
-        # Prepare response message
+        # Create a response message
         response_message = f"{expense_data['category']} expense added ✅"
-        
-        print(f"Expense created: {created_expense}")
-        print(f"Response message: {response_message}")
-        print(f"{'='*50}\n")
         
         # Return response with expense information and response message
         return jsonify({
@@ -312,11 +283,12 @@ def process_message():
 
 # Root level endpoint for process-message (for compatibility)
 @root_message_bp.route('/process-message', methods=['POST'])
+@auth_middleware
 def root_process_message():
     """
     Root level endpoint for process-message (for compatibility with existing clients)
     """
-    return process_message()
+    return api_process_message()
 
 def parse_expense_with_langchain(message):
     """

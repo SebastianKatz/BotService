@@ -8,6 +8,15 @@ A Python-based service that processes expense messages from Telegram users and c
 - **Expense Recognition**: Identifies expense-related messages and ignores non-expense texts.
 - **Automatic Categorization**: Categorizes expenses into predefined categories based on message content.
 - **Response Messages**: Sends confirmation messages with the expense category.
+- **Daily Expense Reports**: Provides a summary of expenses recorded in the last 24 hours.
+- **API Authentication**: Secures API endpoints with an authentication header.
+
+## Commands
+
+The bot supports the following commands:
+- **/start**: Initiates the conversation with the bot
+- **/help**: Shows available commands and usage instructions
+- **/report**: Shows a summary of expenses recorded in the last 24 hours
 
 ## Expense Categories
 
@@ -52,6 +61,9 @@ The bot supports multiple message formats for expense tracking:
    PORT=5000
    DEBUG=False
    DATABASE_URL=your_database_url
+   SUPABASE_URL=your_supabase_url
+   SUPABASE_KEY=your_supabase_key
+   AUTH_KEY=your_auth_key
    ```
 
 3. Start the service:
@@ -65,6 +77,15 @@ The bot supports multiple message formats for expense tracking:
 - **GET /api/health**: Health check endpoint
 - **POST /api/process-message**: Process expense messages
   - Also available at root level: **/process-message**
+
+## Authentication
+
+All API endpoints are protected with an authentication header. Requests must include an `Authorization` header with the value matching the `AUTH_KEY` environment variable.
+
+Example:
+```
+Authorization: your_auth_key
+```
 
 ## Response Format
 
@@ -87,53 +108,57 @@ The service returns a JSON response with the following structure:
 }
 ```
 
+## Daily Report Format
+
+When a user requests a daily report using the `/report` command, the response includes:
+
+```
+📊 Expense Report (Last 24 Hours)
+
+Total: $X,XXX.XX
+
+Expenses:
+1. Description - $XXX.XX (Category) - HH:MM
+2. Description - $XXX.XX (Category) - HH:MM
+...
+```
+
 ## Integration with Connector Service
 
 This service is designed to work with the Telegram Connector Service, which handles the communication with Telegram users and forwards messages to this service for processing.
 
-## Configuración de la Base de Datos PostgreSQL
+## Database Configuration
 
-Este servicio ahora utiliza PostgreSQL para almacenar los mensajes recibidos. Sigue estos pasos para configurar la base de datos:
+This service uses Supabase (PostgreSQL) to store registered users and their expenses. Follow these steps to configure the database:
 
-### Requisitos previos
+### Prerequisites
 
-1. Tener PostgreSQL instalado y en ejecución en tu sistema
-2. Tener un usuario con permisos para crear bases de datos
+1. Have a Supabase account
+2. Create a new project in Supabase
 
-### Configuración
+### Configuration
 
-1. Edita el archivo `.env` con los datos de conexión a tu base de datos:
+1. Edit the `.env` file with your database connection details:
 
 ```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=botservice
-DB_USER=tu_usuario
-DB_PASSWORD=tu_contraseña
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-supabase-key
+AUTH_KEY=your_auth_key
 ```
 
-2. Ejecuta el script de inicialización de la base de datos:
+### Database Structure
 
-```bash
-python init_db.py
-```
+The database contains the following tables:
 
-Este script creará la base de datos y las tablas necesarias.
+- `users`: Stores registered users
+  - `id`: Unique user identifier
+  - `telegram_id`: Telegram ID of the user
+  - `created_at`: Registration date and time
 
-### Endpoints para acceder a los datos
-
-El servicio ahora proporciona los siguientes endpoints para acceder a los datos almacenados:
-
-- `GET /messages`: Obtiene todos los mensajes almacenados en la base de datos
-- `GET /messages/<telegram_id>`: Obtiene todos los mensajes de un usuario específico
-
-### Estructura de la base de datos
-
-La base de datos contiene la siguiente tabla:
-
-- `messages`: Almacena los mensajes recibidos
-  - `id`: Identificador único del mensaje
-  - `telegram_id`: ID de Telegram del usuario que envió el mensaje
-  - `message_text`: Contenido del mensaje
-  - `processed`: Indica si el mensaje ha sido procesado
-  - `created_at`: Fecha y hora en que se recibió el mensaje 
+- `expenses`: Stores registered expenses
+  - `id`: Unique expense identifier
+  - `user_id`: ID of the user who registered the expense
+  - `description`: Description of the expense
+  - `amount`: Amount of the expense
+  - `category`: Category of the expense
+  - `added_at`: Date and time when the expense was registered 
