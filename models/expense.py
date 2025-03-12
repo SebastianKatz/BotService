@@ -35,11 +35,19 @@ class Expense:
         if not data:
             return None
             
+        # Convert added_at from string to datetime if it exists
+        added_at = data.get("added_at")
+        if added_at and isinstance(added_at, str):
+            try:
+                added_at = datetime.fromisoformat(added_at)
+            except ValueError:
+                added_at = datetime.now()
+            
         return cls(
             id=data.get("id"),
             user_id=data.get("user_id"),
             description=data.get("description"),
             amount=data.get("amount"),
             category=data.get("category"),
-            added_at=data.get("added_at")
+            added_at=added_at
         ) 
